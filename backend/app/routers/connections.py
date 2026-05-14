@@ -45,6 +45,16 @@ def _get_toolbox_client(conn: Connection) -> ToolboxClient:
     return ToolboxClient(conn.toolbox_url)
 
 
+def _get_client_for_query(conn: Connection) -> ToolboxClient:
+    """Public helper for other routers to get a client for a connection.
+
+    Ensures the internal toolbox engine is registered before returning.
+    """
+    if conn.toolbox_url and "/toolbox/" in conn.toolbox_url:
+        _register_in_toolbox(conn)
+    return _get_toolbox_client(conn)
+
+
 @router.post("", response_model=ConnectionResponse)
 async def create_connection(
     body: ConnectionCreate,
@@ -124,6 +134,48 @@ async def get_connection(
     conn = await session.get(Connection, connection_id)
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+    return _to_response(conn)
+
+
+@router.patch("/{connection_id}", response_model=ConnectionResponse)
+async def update_connection(
+    connection_id: int,
+    body: ConnectionCreate,
+    request: Request,
+    session: AsyncSession = Depends(get_session),
+):
+    """Update an existing connection's credentials. Re-registers the engine."""
+    conn = await session.get(Connection, connection_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+
+    is_external_toolbox = bool(body.toolbox_url)
+
+    conn.name = body.name
+    conn.source_type = body.source_type
+    conn.host = body.host
+    conn.port = body.port
+    conn.database_name = body.database_name
+    if body.password:  # only update password if provided (empty = keep old)
+        conn.password = body.password
+    conn.username = body.username
+    conn.ssl_mode = body.ssl_mode
+    conn.file_path = body.file_path
+    conn.toolbox_url = body.toolbox_url
+    conn.connection_type = "toolbox" if is_external_toolbox else "toolbox"  # always toolbox
+
+    if not is_external_toolbox:
+        _register_in_toolbox(conn)
+        conn.toolbox_url = _build_internal_toolbox_url(request, conn.id)
+    else:
+        unregister_connection(conn.id)
+
+    # Schema cache may be invalid for the new connection — clear it
+    conn.schema_cache = None
+    conn.schema_profile = None
+
+    await session.commit()
+    await session.refresh(conn)
     return _to_response(conn)
 
 

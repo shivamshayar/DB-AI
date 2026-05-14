@@ -68,7 +68,14 @@ export default function DashboardsPanel() {
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <h3 className="text-lg font-semibold flex-1">{selectedDash.title}</h3>
-          <Button variant="outline" size="sm" className="rounded-lg" onClick={() => handleSelect(selectedDash.id)} disabled={refreshing}>
+          <Button variant="outline" size="sm" className="rounded-lg" onClick={async () => {
+            setRefreshing(true);
+            try {
+              const fresh = await apiPost<DashboardDetail>(`/api/v1/dashboards/${selectedDash.id}/refresh`);
+              setSelectedDash(fresh);
+            } catch { /* ignore */ }
+            finally { setRefreshing(false); }
+          }} disabled={refreshing}>
             {refreshing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}
             Refresh
           </Button>

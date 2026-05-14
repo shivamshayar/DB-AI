@@ -7,13 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
   Code, ChevronDown, ChevronUp, MessageCircleQuestion,
-  Database, Table2, Zap, ArrowRight,
+  Database, Table2, Zap, ArrowRight, Pin,
 } from "lucide-react";
 import QueryInput from "@/app/components/QueryInput";
 import ChartPanel from "@/app/components/ChartPanel";
 import ResultTable from "@/app/components/ResultTable";
+import PinToDashboardDialog from "@/app/components/PinToDashboardDialog";
 import { apiPost, apiGet } from "@/app/lib/api";
-import type { QueryResult, QueryRequest, ChatThreadDetail } from "@/app/lib/types";
+import type { QueryResult, QueryRequest, ChatThreadDetail, LlmConfig } from "@/app/lib/types";
 
 export default function ChatPage() {
   const router = useRouter();
@@ -23,6 +24,12 @@ export default function ChatPage() {
   const [messages, setMessages] = useState<QueryResult[]>([]);
   const [expandedSql, setExpandedSql] = useState<Set<number>>(new Set());
   const [expandedData, setExpandedData] = useState<Set<number>>(new Set());
+  const [pinDialog, setPinDialog] = useState<{ queryId: number; title: string } | null>(null);
+  const [llmConfig, setLlmConfig] = useState<LlmConfig | null>(null);
+
+  useEffect(() => {
+    apiGet<LlmConfig>("/api/v1/settings/llm").then(setLlmConfig).catch(() => {});
+  }, []);
 
   // Listen for thread events from AppShell (via layout)
   useEffect(() => {
@@ -116,9 +123,17 @@ export default function ChatPage() {
               <Zap className="h-7 w-7 text-primary" />
             </div>
             <h3 className="text-lg font-semibold mb-1.5">What would you like to know?</h3>
-            <p className="text-sm text-muted-foreground max-w-md mb-6">
+            <p className="text-sm text-muted-foreground max-w-md mb-4">
               Ask questions about your data. I&apos;ll generate SQL and show you charts.
             </p>
+            {llmConfig && (
+              <Badge variant="secondary" className="rounded-full px-3 mb-6 text-[11px]">
+                {llmConfig.provider === "ollama" && "🦙 "}
+                {llmConfig.provider === "openai" && "🤖 "}
+                {llmConfig.provider === "anthropic" && "🧠 "}
+                {llmConfig.model}
+              </Badge>
+            )}
             <div className="grid grid-cols-2 gap-2.5 max-w-md w-full">
               {["Show me all tables", "What databases are connected?", "What is the total revenue?", "How many rows in each table?"].map((q) => (
                 <button key={q} onClick={() => handleSubmit(q)}
@@ -188,7 +203,19 @@ export default function ChatPage() {
                           </Badge>
                         )}
                         {msg.chart_spec && msg.result_data && (
-                          <ChartPanel chartSpec={msg.chart_spec} resultData={msg.result_data} title={msg.chart_spec.title} />
+                          <div className="group/chart relative">
+                            <ChartPanel chartSpec={msg.chart_spec} resultData={msg.result_data} title={msg.chart_spec.title} />
+                            {msg.id > 0 && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                className="absolute top-2 right-2 h-7 rounded-lg opacity-0 group-hover/chart:opacity-100 transition-opacity shadow-sm bg-background"
+                                onClick={() => setPinDialog({ queryId: msg.id, title: msg.chart_spec?.title || msg.question.slice(0, 80) })}
+                              >
+                                <Pin className="h-3 w-3 mr-1.5" /> Pin
+                              </Button>
+                            )}
+                          </div>
                         )}
                         {msg.result_data && !msg.chart_spec && (
                           <Card className="shadow-sm"><CardContent className="py-3"><ResultTable data={msg.result_data} /></CardContent></Card>
@@ -228,6 +255,16 @@ export default function ChatPage() {
           <QueryInput onSubmit={handleSubmit} loading={loading} />
         </div>
       </div>
+
+      {/* Pin to Dashboard dialog */}
+      {pinDialog && (
+        <PinToDashboardDialog
+          open={true}
+          onClose={() => setPinDialog(null)}
+          queryId={pinDialog.queryId}
+          defaultTitle={pinDialog.title}
+        />
+      )}
     </div>
   );
 }

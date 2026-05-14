@@ -158,6 +158,48 @@ async def update_panel(
     return _panel_to_response(panel, query)
 
 
+@router.post("/{dashboard_id}/refresh", response_model=DashboardResponse)
+async def refresh_dashboard(
+    dashboard_id: int,
+    session: AsyncSession = Depends(get_session),
+):
+    """Re-execute the SQL for every panel in the dashboard and update its result.
+
+    Uses the saved SQL (no LLM call) — fast and deterministic.
+    """
+    from sqlalchemy.orm import selectinload
+    from app.routers.connections import _get_client_for_query
+
+    result = await session.execute(
+        select(Dashboard)
+        .where(Dashboard.id == dashboard_id)
+        .options(selectinload(Dashboard.panels))
+    )
+    dashboard = result.scalar_one_or_none()
+    if not dashboard:
+        raise HTTPException(status_code=404, detail="Dashboard not found")
+
+    for panel in dashboard.panels:
+        query = await session.get(Query, panel.query_id)
+        if not query or not query.sql_generated or not query.connection_id:
+            continue
+        try:
+            from app.models import Connection
+            conn = await session.get(Connection, query.connection_id)
+            if not conn:
+                continue
+            client = _get_client_for_query(conn)
+            new_data = await client.execute_sql(query.sql_generated)
+            import json as _json
+            query.result_data = _json.dumps(new_data)
+        except Exception:
+            # Leave the old result in place if refresh fails
+            continue
+
+    await session.commit()
+    return await _to_response(dashboard, session)
+
+
 def _panel_to_response(panel: DashboardPanel, query: Query | None) -> PanelResponse:
     layout = json.loads(panel.layout) if panel.layout else None
     return PanelResponse(

@@ -9,10 +9,10 @@ import { Separator } from "@/components/ui/separator";
 import {
   Plus, RefreshCw, Trash2, CheckCircle, Loader2,
   Database, Wifi, WifiOff, Eye, EyeOff, ChevronDown, ChevronUp,
-  CheckCircle2, XCircle,
+  CheckCircle2, XCircle, Pencil, Save, X,
 } from "lucide-react";
 import SchemaViewer from "@/app/components/SchemaViewer";
-import { apiGet, apiPost, apiDelete } from "@/app/lib/api";
+import { apiGet, apiPost, apiPatch, apiDelete } from "@/app/lib/api";
 import type { ConnectionListItem, ConnectionDetail, ConnectionCreate } from "@/app/lib/types";
 
 const DB_CONFIGS = {
@@ -50,6 +50,9 @@ export default function ConnectionsPanel() {
   // Advanced: MCP Toolbox
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [formToolboxUrl, setFormToolboxUrl] = useState("");
+
+  // Edit mode
+  const [editingId, setEditingId] = useState<number | null>(null);
 
   const loadConnections = async () => {
     try { setConnections(await apiGet<ConnectionListItem[]>("/api/v1/connections")); }
@@ -101,18 +104,27 @@ export default function ConnectionsPanel() {
 
     setCreating(true);
     try {
-      const result = await apiPost<ConnectionDetail & { test_result?: { ok: boolean; message: string } }>("/api/v1/connections", body);
-      const testOk = result.test_result?.ok;
-      if (testOk) {
-        showMsg(`Connected to ${result.name} successfully`, "success");
+      const result = editingId
+        ? await apiPatch<ConnectionDetail>(`/api/v1/connections/${editingId}`, body)
+        : await apiPost<ConnectionDetail & { test_result?: { ok: boolean; message: string } }>("/api/v1/connections", body);
+
+      if (editingId) {
+        showMsg(`Updated ${result.name}. Re-sync schema to refresh.`, "success");
       } else {
-        showMsg(`Connection saved but test failed: ${result.test_result?.message || "Unknown error"}. Check your credentials.`, "error");
+        const testOk = (result as { test_result?: { ok: boolean } }).test_result?.ok;
+        const testMsg = (result as { test_result?: { message: string } }).test_result?.message;
+        if (testOk) {
+          showMsg(`Connected to ${result.name} successfully`, "success");
+        } else {
+          showMsg(`Connection saved but test failed: ${testMsg || "Unknown error"}.`, "error");
+        }
       }
       resetForm();
+      setEditingId(null);
       await loadConnections();
       setSelected(result);
     } catch (e) {
-      showMsg(e instanceof Error ? e.message : "Failed to create connection", "error");
+      showMsg(e instanceof Error ? e.message : "Failed to save connection", "error");
     } finally {
       setCreating(false);
     }
@@ -144,6 +156,25 @@ export default function ConnectionsPanel() {
     } finally { setSyncing(false); }
   };
 
+  const handleEdit = (c: ConnectionDetail) => {
+    setEditingId(c.id);
+    setFormName(c.name);
+    setDbType((c.source_type as DbType) || "postgresql");
+    setFormHost(c.host || "");
+    setFormPort(c.port?.toString() || "");
+    setFormDb(c.database_name || "");
+    setFormUser(c.username || "");
+    setFormPass("");  // never prefill password for security
+    setFormSsl(c.ssl_mode || "disable");
+    setFormFilePath(c.file_path || "");
+    setFormToolboxUrl(c.toolbox_url && !c.toolbox_url.includes("/toolbox/") ? c.toolbox_url : "");
+  };
+
+  const handleCancelEdit = () => {
+    setEditingId(null);
+    resetForm();
+  };
+
   const handleDelete = async (id: number) => {
     try {
       await apiDelete(`/api/v1/connections/${id}`);
@@ -165,7 +196,16 @@ export default function ConnectionsPanel() {
 
         {/* New connection form — on top */}
         <div className="border-b bg-muted/20 p-4 space-y-3 max-h-[60%] overflow-auto">
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">New Connection</p>
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+              {editingId ? "Edit Connection" : "New Connection"}
+            </p>
+            {editingId && (
+              <button onClick={handleCancelEdit} className="text-[10px] text-muted-foreground hover:text-foreground flex items-center gap-1">
+                <X className="h-3 w-3" /> Cancel
+              </button>
+            )}
+          </div>
 
           {/* Connection name */}
           <Input placeholder="Connection name (e.g. Production DB)" value={formName} onChange={(e) => setFormName(e.target.value)} className="h-9 text-sm rounded-lg" />
@@ -272,8 +312,10 @@ export default function ConnectionsPanel() {
           </div>
 
           <Button onClick={handleCreate} className="w-full rounded-lg shadow-sm" size="sm" disabled={creating}>
-            {creating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Plus className="h-4 w-4 mr-2" />}
-            {creating ? "Connecting..." : "Add Connection"}
+            {creating ? <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              : editingId ? <Save className="h-4 w-4 mr-2" />
+              : <Plus className="h-4 w-4 mr-2" />}
+            {creating ? "Saving..." : editingId ? "Save Changes" : "Add Connection"}
           </Button>
         </div>
 
@@ -368,6 +410,9 @@ export default function ConnectionsPanel() {
                     <Button variant="outline" size="sm" className="rounded-lg" onClick={() => handleTest(selected.id)} disabled={testing}>
                       {testing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <CheckCircle className="h-4 w-4 mr-2" />}
                       Test Connection
+                    </Button>
+                    <Button variant="outline" size="sm" className="rounded-lg" onClick={() => handleEdit(selected)}>
+                      <Pencil className="h-4 w-4 mr-2" /> Edit
                     </Button>
                     <Button size="sm" className="rounded-lg shadow-sm" onClick={() => handleSync(selected.id)} disabled={syncing}>
                       {syncing ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <RefreshCw className="h-4 w-4 mr-2" />}

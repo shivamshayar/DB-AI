@@ -42,6 +42,9 @@ test-infra/__pycache__/
 # Plans and Claude Code settings (local-only)
 .claude/
 
+# Chat log dump (local-only)
+chat-log.jsonl
+
 # Backend-specific
 backend/data/
 backend/uploads/
